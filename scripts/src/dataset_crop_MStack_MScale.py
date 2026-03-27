@@ -302,118 +302,33 @@ def center_crop(img, new_width, new_height):
     return img.crop((left, top, right, bottom))
 
 
-def get_valid_image_bins(image_path, idx, width, height, num_frames, scale= UPSAMPLE_SCALE[0]):
-    image_file_path= os.listdir(image_path)[idx]
+def get_valid_image_bins(image_path, idx, width, height, num_frames, scale=UPSAMPLE_SCALE[0]):
+    """
+    Loads a validation clip from a frames/ folder (jpg files, no events).
+    image_path: full path to the frames/ folder (e.g. .../Eadom_1/frames)
+    idx: starting frame index
+    """
+    frames = sorted([f for f in os.listdir(image_path) if f.lower().endswith('.jpg')])
 
-    image_file_path= os.path.join(image_path, image_file_path)
+    if len(frames) < num_frames:
+        raise ValueError(f"Validation folder '{image_path}' has only {len(frames)} frames, need {num_frames}.")
 
-    # print('image_file_path', image_file_path)
-
-
-    # valid_image= load_image(image_file_path).resize((width, height))
-    valid_image= load_image(image_file_path)
-
-    '''
-    Code block for scale image: start
-    '''
-
-    image_weigth, image_height = valid_image.size
-
-    valid_image= valid_image.resize((int(image_weigth * scale), int(image_height * scale)))
-
-    '''
-    Code block for scale image: end
-    '''
-
-    valid_image= center_crop(valid_image, width, height)
-
-    '''
-    Load valid event frame: error here
-    '''
-    rgb_folder_path = image_path
-
-    frames = os.listdir(rgb_folder_path)
-    # Sort the frames by name
-    frames.sort()
-
-
-    # selected_frames = frames[start_idx:start_idx + self.sample_frames]
+    # Clamp idx so we never go out of bounds
+    idx = min(idx, len(frames) - num_frames)
     selected_frames = frames[idx:idx + num_frames]
 
+    # Load first frame as the conditioning image
+    first_frame_path = os.path.join(image_path, selected_frames[0])
+    valid_image = load_image(first_frame_path)
 
+    w, h = valid_image.size
+    valid_image = valid_image.resize((int(w * scale), int(h * scale)))
+    valid_image = center_crop(valid_image, width, height)
 
-    event_path= image_path.replace('image', 'event')
-
-
-    ev_pixel_values = torch.empty((num_frames, EV_CHANNELS, height, width))
-
-    for i in range(num_frames):
-
-        '''
-        Load valid event frame: error here
-        '''
-        frame_name = selected_frames[i]
-        frame_path= os.path.join(event_path, frame_name)
-
-
-
-        if i == 0:
-            zero_frame = torch.zeros((EV_CHANNELS, height, width))
-            zero_frame = zero_frame.float()
- 
-            ev_pixel_values[i] = zero_frame
-            continue
-
-        for bins in range(NUM_BINS):
-            
-            '''
-            Load valid event frame: error here
-            '''
-            frame_path= os.path.join(event_path, frame_name.split('.')[0] + f'_{str(bins).zfill(2)}.png')
-            
-
-            print('frame_path', frame_path)
-
-            with Image.open(frame_path) as img:
-
-                '''
-                Code block for scale event image: start
-                '''
-
-                image_weigth, image_height = img.size
-
-                img= img.resize((int(image_weigth * scale), int(image_height * scale)))
-
-                '''
-                Code block for scale event image: end
-                '''
-                
-                img_resized= center_crop(img, width, height)
-
-                img_tensor = torch.from_numpy(np.array(img_resized)).float()
-
-
-                # single channel
-                # img_tensor_1ch= img_tensor[:, :, 0] - img_tensor[:, :, 2]
-                # 2 channels
-                img_tensor_1ch= img_tensor
-
-                # Normalize the image by scaling pixel values to [-1, 1]
-                img_normalized = img_tensor_1ch / 127.0 - 1
-
-                img_normalized = img_normalized.unsqueeze(0)
-
-
-                '''
-                bins! not i: ev_pixel_values[i][bins] !!!!!!
-                '''
-                ev_pixel_values[i][bins] = img_normalized
-    
+    # All-zero event tensor — events disabled
+    ev_pixel_values = torch.zeros((num_frames, EV_CHANNELS, height, width), dtype=torch.float32)
 
     return valid_image, ev_pixel_values
-        
-
-
 
 
 class ValidDataset(Dataset):

@@ -403,12 +403,7 @@ def load_images_valid(image_path, idx, width, height, num_frames, scale):
 
 def validate_once(val_save_dir, accelerator, pipeline, args, global_step, valid_image_path, idx, scale):
 
-    valid_image, valid_ev_imgs= load_images_valid(valid_image_path, idx, args.width, args.height, args.num_frames, scale)
-    
 
-    with torch.autocast(
-        str(accelerator.device).replace(":0", ""), enabled=accelerator.mixed_precision == "fp16"
-    ):
         
         for val_img_idx in range(args.num_validation_images):
             num_frames = args.num_frames
