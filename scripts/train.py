@@ -733,8 +733,12 @@ def parse_args():
         type=int,
         default=0
     )
-
-
+    parser.add_argument(
+        "--samples_per_folder",
+        type=int,
+        default=100,
+        help="Number of random clip samples drawn from each named folder per epoch.",
+    )
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -1010,7 +1014,13 @@ def main():
     # DataLoaders creation:
     args.global_batch_size = args.per_gpu_batch_size * accelerator.num_processes
 
-    train_dataset = DummyDataset(args.train_data_path, width=args.width, height=args.height, sample_frames=args.num_frames)
+    train_dataset = DummyDataset(
+        args.train_data_path,
+        samples_per_folder=args.samples_per_folder,
+        width=args.width,
+        height=args.height,
+        sample_frames=args.num_frames,
+    )
     sampler = RandomSampler(train_dataset)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,

@@ -197,258 +197,99 @@ def get_image_parts(image, crop_size_x, crop_size_y, idx):
 
     return image_parts[idx]
 
-
-
-
-
-
 def check_all_files_exist(file_list, folder_path):
 
     return all([os.path.isfile(os.path.join(folder_path, file)) for file in file_list])
 
-
+ALLOWED_FOLDERS = [
+    "Eadom_1", "Eadom_2", "Eadom_3", "Eadom_4", "Eadom_5",
+    "Merawi_1", "Merawi_2", "Merawi_3",
+    "Sirguta_1", "Sirguta_2", "Sirguta_3",
+]
 
 class DummyDataset(Dataset):
-    def __init__(self, base_folder, num_samples=100000, width=1024, height=576, sample_frames=14, valid = False):
-        """
-        Args:
-            num_samples (int): Number of samples in the dataset.
-            channels (int): Number of channels, default is 3 for RGB.
-        """
-        self.num_samples = num_samples
-        # Define the path to the folder containing video frames
-        # self.base_folder =  '/fs/nexus-projects/DroneHuman/jxchen/data/04_ev/Control_SVD/Finetune_data/bdd100k/images/track/mini'
-
-        # self.base_folder =  '/fs/nexus-projects/DroneHuman/jxchen/data/04_ev/Control_SVD/Finetune_data/ev_svd_mini_rgb'
+    def __init__(self, base_folder, samples_per_folder=100,
+                 width=512, height=320, sample_frames=14):
         self.base_folder = base_folder
-        self.folders = os.listdir(self.base_folder)
+        self.folders = [
+            f for f in ALLOWED_FOLDERS
+            if os.path.isdir(os.path.join(base_folder, f))
+        ]
+        if not self.folders:
+            raise ValueError(f"No valid folders found under {base_folder}")
+
+        self.samples_per_folder = samples_per_folder
         self.channels = 3
-        self.ev_channels = EV_CHANNELS
+        self.ev_channels = EV_CHANNELS  # kept for shape compat only
         self.width = width
         self.height = height
         self.sample_frames = sample_frames
 
-        self.valid = valid
+        # Pre-sort frame lists once at init — avoids repeated os.listdir calls
+        # Filters to .jpg only so no hidden files or metadata files sneak in
+        self.folder_frames = {}
+        for folder_name in self.folders:
+            frames_path = os.path.join(base_folder, folder_name, 'frames')
+            all_frames = sorted([
+                f for f in os.listdir(frames_path)
+                if f.lower().endswith('.jpg')
+            ])
+            if len(all_frames) < self.sample_frames:
+                raise ValueError(
+                    f"'{folder_name}/frames' has only {len(all_frames)} .jpg frames, "
+                    f"need at least {self.sample_frames}."
+                )
+            self.folder_frames[folder_name] = all_frames
 
     def __len__(self):
-        train_txt= os.path.join(self.base_folder, "../TRAINING.txt")
-
-        with open(train_txt) as f:
-            num_samples = f.readlines()
-            num_samples= int(num_samples[0])
-            num_samples= num_samples // self.sample_frames
-            # print('num_samples', num_samples)
-
-        return num_samples
+        return len(self.folders) * self.samples_per_folder
 
     def __getitem__(self, idx):
-        """
-        Args:
-            idx (int): Index of the sample to return.
+        # Round-robin across folders so all folders are covered each epoch
+        folder_name = self.folders[idx % len(self.folders)]
+        frames_path = os.path.join(self.base_folder, folder_name, 'frames')
+        frames = self.folder_frames[folder_name]
 
-        Returns:
-            dict: A dictionary containing the 'pixel_values' tensor of shape (16, channels, 320, 512).
-        """
-        # Randomly select a folder (representing a video) from the base folder
-
-        chosen_folder = random.choice(self.folders)
-        folder_path = os.path.join(self.base_folder, chosen_folder)
-
-
-
-
-        # Get from rgb folder
-        rgb_folder_path = os.path.join(folder_path, 'image')
-        
-        frames = os.listdir(rgb_folder_path)
-        # Sort the frames by name
-        frames.sort()
-
-        
-        # Ensure the selected folder has at least `sample_frames`` frames
-        if len(frames) < self.sample_frames:
-            raise ValueError(
-                f"The selected folder '{chosen_folder}' contains fewer than `{self.sample_frames}` frames.")
-        
-        # Randomly select a start index for frame sequence
-        # start_idx = random.randint(0, len(frames) - self.sample_frames)
-        
+        # Random contiguous clip (e.g. frame_008281.jpg ... frame_008285.jpg)
         start_idx = random.randint(0, len(frames) - self.sample_frames)
-
-
-        test_img= Image.open(os.path.join(rgb_folder_path, frames[start_idx]))
-
-
-
-        # selected_frames = frames[start_idx:start_idx + self.sample_frames]
         selected_frames = frames[start_idx:start_idx + self.sample_frames]
 
-        while check_all_files_exist(selected_frames, rgb_folder_path) == False:
-            start_idx = random.randint(0, len(frames) - self.sample_frames)
-            selected_frames = frames[start_idx:start_idx + self.sample_frames]
+        scale = UPSAMPLE_SCALE[0]
 
-        
-        # ger random crop idx
-        rand_x, rand_y= get_random_crop_idx(test_img, CROP_x, CROP_y)
+        # Get crop anchor from first frame of clip
+        first_img = Image.open(os.path.join(frames_path, selected_frames[0]))
+        rand_x, rand_y = get_random_crop_idx(first_img, CROP_x, CROP_y)
+        first_img.close()
 
-        # selected_frames.reverse()
+        pixel_values = torch.empty(
+            (self.sample_frames, self.channels, self.height, self.width)
+        )
 
-
-        '''
-        Random select a scale/ Fix scale
-        '''
-        # scale_idx= random.randint(0, len(UPSAMPLE_SCALE) - 1)
-
-        scale= UPSAMPLE_SCALE[0]
-
-
-        # print('scale', scale)
-
-
-   
-
-        # Initialize a tensor to store the pixel values
-        # pixel_values = torch.empty((self.sample_frames, self.channels, self.height, self.width))
-        pixel_values = torch.empty((self.sample_frames, self.channels, self.height, self.width))
-
-
-        # Load and process each frame
         for i, frame_name in enumerate(selected_frames):
-            frame_path = os.path.join(rgb_folder_path, frame_name)
-
-
+            frame_path = os.path.join(frames_path, frame_name)
             if i == 0:
                 init_frame_path = frame_path
-                # print('init_frame', init_frame_path)
-
-            # print('frame', frame_path)
 
             with Image.open(frame_path) as img:
-        
-
-                '''
-                Code block for scale image: start
-                '''
-
-                image_weigth, image_height = img.size
-
-                # print('image_weigth, image_height', image_weigth, image_height)
-
-
-                img= img.resize((int(image_weigth * scale), int(image_height * scale)))
-
-                # print('img size', img.size)
-
-                # exit(0)
-
-                '''
-                Code block for scale image: end
-                '''
-
-        
-
-                img_resized= apply_crop(img, rand_x, rand_y, CROP_x, CROP_y)
-
-
-                
-                img_tensor = torch.from_numpy(np.array(img_resized)).float()
-
-                # Normalize the image by scaling pixel values to [-1, 1]
+                w, h = img.size
+                img = img.resize((int(w * scale), int(h * scale)))
+                img_cropped = apply_crop(img, rand_x, rand_y, CROP_x, CROP_y)
+                img_tensor = torch.from_numpy(np.array(img_cropped)).float()
                 img_normalized = img_tensor / 127.5 - 1
+                pixel_values[i] = img_normalized.permute(2, 0, 1)  # HWC -> CHW
 
-                # Rearrange channels if necessary
-                if self.channels == 3:
-                    img_normalized = img_normalized.permute(
-                        2, 0, 1)  # For RGB images
-                elif self.channels == 1:
-                    img_normalized = img_normalized.mean(
-                        dim=2, keepdim=True)  # For grayscale images
+        # All-zero event tensor — correct shape for torch.zeros_like() in train.py
+        # No event folder is read; train.py already discards the values anyway
+        ev_pixel_values = torch.zeros(
+            (self.sample_frames, self.ev_channels, self.height, self.width),
+            dtype=torch.float32
+        )
 
-                pixel_values[i] = img_normalized
-        
-        '''
-        Modified by Jxchen:
-        Add event frame
-        '''
-        ev_folder_path = os.path.join(folder_path, 'event')
-
-
-        # Initialize a tensor to store the pixel values
-        ev_pixel_values = torch.empty((self.sample_frames, self.ev_channels, self.height, self.width))
-
-
-
-       # Load and process each frame
-        for i, frame_name in enumerate(selected_frames):
-
-            # old version: if the last frame is not exist, use zero frame
-            if i == 0:
-                zero_frame = torch.zeros((self.ev_channels, self.height, self.width))
-                zero_frame = zero_frame.float()
-
-
-                ev_pixel_values[i] = zero_frame
-                continue
-
-
-            frame_path = os.path.join(ev_folder_path, frame_name)
-
-            # print('event', frame_path)
-
-
-            for bins in range(NUM_BINS):
-                # print('frame_name', frame_name)
-                frame_path= os.path.join(ev_folder_path, frame_name.split('.')[0] + f'_{str(bins).zfill(2)}.png')
-
-                # print('frame_path', frame_path)
-
-                with Image.open(frame_path) as img:
-                    # Resize the image and convert it to a tensor
-                    # img_resized = img.resize((self.width, self.height))
-                    # img= np.array(img)
-
-                    '''
-                    Code block for scale event image: start
-                    '''
-
-                    image_weigth, image_height = img.size
-
-                    # print('event image_weigth, image_height', image_weigth, image_height)
-
-                    img= img.resize((int(image_weigth * scale), int(image_height * scale)))
-
-                    # print('event img size', img.size)
-
-                    '''
-                    Code block for scale event image: end
-                    '''
-
-
-                  
-                    
-                    img_resized= apply_crop(img, rand_x, rand_y, CROP_x, CROP_y)
-
-
-                    img_tensor = torch.from_numpy(np.array(img_resized)).float()
-
-
-                    img_tensor_1ch= img_tensor
-
-                    # Normalize the image by scaling pixel values to [-1, 1]
-                    img_normalized = img_tensor_1ch / 127.0 - 1
-
-                    img_normalized = img_normalized.unsqueeze(0)
-
-
-                    '''
-                    bins! not i: ev_pixel_values[i][bins] !!!!!!
-                    '''
-                    ev_pixel_values[i][bins] = img_normalized
-
-        # exit(0)
-            
-
-        return {'pixel_values': pixel_values, "event_values": ev_pixel_values, 'init_frame': init_frame_path}
+        return {
+            'pixel_values': pixel_values,
+            'event_values': ev_pixel_values,
+            'init_frame': init_frame_path,
+        }
     
 
 def center_crop(img, new_width, new_height):
