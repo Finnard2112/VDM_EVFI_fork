@@ -1,0 +1,16 @@
+accelerate launch train.py \
+    --pretrained_model_name_or_path="stabilityai/stable-video-diffusion-img2vid" \
+    --output_dir="/fs/vulcan-projects/Force_Learning/phan2003/output_test_train" \
+    --train_data_path="../clear_motion_sample" \
+    --num_frames=5 \
+    --width=512 \
+    --height=320 \
+    --per_gpu_batch_size=1 \
+    --gradient_accumulation_steps=1 \
+    --num_train_epochs=5 \
+    --learning_rate=5e-5 \
+    --seed=123 \
+    --mixed_precision="fp16" \
+    --validation_steps=2 \
+    --num_workers=0 \
+    --enable_xformers_memory_efficient_attention
