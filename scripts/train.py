@@ -1306,6 +1306,7 @@ def main():
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
 
+                accelerator.wait_for_everyone() 
                 if accelerator.is_main_process:
                     # save checkpoints!
                     if global_step % args.checkpointing_steps == 0:
@@ -1340,7 +1341,7 @@ def main():
                         logger.info(f"Saved state to {save_path}")
                     # sample images!
                     if global_step % args.validation_steps == 0:
-                        accelerator.wait_for_everyone() 
+                        
                         logger.info(
                             f"Running validation... \n Generating {args.num_validation_images} videos."
                         )
@@ -1495,7 +1496,7 @@ def main():
 
                         del pipeline
                         torch.cuda.empty_cache()
-                    accelerator.wait_for_everyone() 
+                accelerator.wait_for_everyone() 
 
             logs = {"step_loss": loss.detach().item(
             ), "lr": lr_scheduler.get_last_lr()[0]}
