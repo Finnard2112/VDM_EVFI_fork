@@ -15,10 +15,12 @@
 source /nfshomes/phan2003/miniconda3/etc/profile.d/conda.sh
 conda activate VDM_EVFI
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export NCCL_TIMEOUT=1800  # 1 hour instead of default 10 minutes
-export TORCH_NCCL_BLOCKING_WAIT=1
+export NCCL_DEBUG=INFO
+export TORCH_NCCL_BLOCKING_WAIT=0
+export NCCL_TIMEOUT=3600
 
-accelerate launch --multi_gpu --num_processes=2 --dynamo_backend=inductor --mixed_precision=bf16 train.py \
+
+accelerate launch --multi_gpu --num_processes=2 --mixed_precision=bf16 train.py \
     --pretrained_model_name_or_path="stabilityai/stable-video-diffusion-img2vid" \
     --output_dir="/fs/vulcan-projects/Force_Learning/phan2003/output_EMG_run3" \
     --train_data_path="/fs/vulcan-projects/Force_Learning/EMG" \

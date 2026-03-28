@@ -402,30 +402,34 @@ def load_images_valid(image_path, idx, width, height, num_frames, scale):
 
 
 def validate_once(val_save_dir, accelerator, pipeline, args, global_step, valid_image_path, idx, scale):
-    for val_img_idx in range(args.num_validation_images):
-        num_frames = args.num_frames
-        video_frames = pipeline(
-            valid_image,
-            valid_ev_imgs,
-            height=args.height,
-            width=args.width,
-            num_frames=num_frames,
-            decode_chunk_size=8,
-            motion_bucket_id=127,
-            fps=7,
-            noise_aug_strength=0.02,
-            # generator=generator,
-        ).frames[0]
 
-        out_file = os.path.join(
-            val_save_dir,
-            f"step_{global_step}_val_img_{val_img_idx}.mp4",
-        )
 
-        for i in range(num_frames):
-            img = video_frames[i]
-            video_frames[i] = np.array(img)
-        export_to_gif(video_frames, out_file, 8)
+        
+        for val_img_idx in range(args.num_validation_images):
+            num_frames = args.num_frames
+            video_frames = pipeline(
+                valid_image,
+                valid_ev_imgs,
+                height=args.height,
+                width=args.width,
+                num_frames=num_frames,
+                decode_chunk_size=8,
+                motion_bucket_id=127,
+                fps=7,
+                noise_aug_strength=0.02,
+                # generator=generator,
+            ).frames[0]
+
+            out_file = os.path.join(
+                val_save_dir,
+                f"step_{global_step}_val_img_{val_img_idx}.mp4",
+            )
+
+            for i in range(num_frames):
+                img = video_frames[i]
+                video_frames[i] = np.array(img)
+            export_to_gif(video_frames, out_file, 8)
+
     return video_frames
 
 
@@ -751,7 +755,6 @@ def download_image(url):
     )(url)
     return original_image
 
-gt_saved = False
 
 def main():
     args = parse_args()
@@ -1002,8 +1005,7 @@ def main():
         if args.valid_path2 is not None:
             gt_frames_valid2= get_video(args.valid_path2, args.valid_path2_idx, args.num_frames, args.width, args.height, scale= VALID_UPSCALE, test=True)
 
-    accelerator.wait_for_everyone()
-    
+
     # DataLoaders creation:
     args.global_batch_size = args.per_gpu_batch_size * accelerator.num_processes
 
@@ -1283,6 +1285,11 @@ def main():
                 )
                 loss = loss.mean()
 
+                # Gather the losses across all processes for logging (if we use distributed training).
+                avg_loss = accelerator.gather(
+                    loss.repeat(args.per_gpu_batch_size)).mean()
+                train_loss += avg_loss.item() / args.gradient_accumulation_steps
+
                 # Backpropagate
                 accelerator.backward(loss)
                 # if accelerator.sync_gradients:
@@ -1293,12 +1300,6 @@ def main():
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
-                
-                # Gather the losses across all processes for logging (if we use distributed training).
-                avg_loss = accelerator.gather(
-                    loss.repeat(args.per_gpu_batch_size)).mean()
-                train_loss += avg_loss.item()
-
                 if args.use_ema:
                     ema_controlnet.step(controlnet.parameters())
                 progress_bar.update(1)
@@ -1339,7 +1340,10 @@ def main():
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
                     # sample images!
-                    if global_step % args.validation_steps == 0:
+                    if (
+                        (global_step % args.validation_steps == 0)
+                        or (global_step == 1)
+                    ):
                         accelerator.wait_for_everyone() 
                         logger.info(
                             f"Running validation... \n Generating {args.num_validation_images} videos."
@@ -1480,15 +1484,18 @@ def main():
                             plt.plot(x_axis, LPIPS_list_valid)
                             plt.savefig(os.path.join(args.output_dir, 'LPIPS_Curve_valid.png'))
 
-                        if not gt_saved:
-                            save_gt_video_path_train = os.path.join(args.output_dir, 'gt_train.mp4')
-                            save_gt_video_path_valid = os.path.join(args.output_dir, 'gt_valid.mp4')
+                        if global_step == 1:
+                            save_gt_video_path_train= os.path.join(args.output_dir, 'gt_train.mp4')
+
+                            save_gt_video_path_valid= os.path.join(args.output_dir, 'gt_valid.mp4')
+
                             if args.valid_path1 is not None:
                                 export_to_gif(gt_frames_valid1, save_gt_video_path_train, 8)
                             if args.valid_path2 is not None:
                                 export_to_gif(gt_frames_valid2, save_gt_video_path_valid, 8)
-                            gt_saved = True
-                    
+                        
+
+
                         if args.use_ema:
                             # Switch back to the original UNet parameters.
                             ema_controlnet.restore(controlnet.parameters())
