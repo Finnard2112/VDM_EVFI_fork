@@ -157,7 +157,8 @@ def calculate_psnr(vid1, vid2):
 
         if mse_loss_fn(img1, img2) == 0:
             psnr_i= 100
-        psnr_i= 10*torch.log10(1/mse_loss_fn(img1, img2)).detach().cpu().numpy()
+        else:
+            psnr_i= 10*torch.log10(1/mse_loss_fn(img1, img2)).detach().cpu().numpy()
 
         psnr_list.append(psnr_i)
     
@@ -402,6 +403,18 @@ def load_images_valid(image_path, idx, width, height, num_frames, scale):
 
 
 def validate_once(val_save_dir, accelerator, pipeline, args, global_step, valid_image_path, idx, scale):
+    
+    valid_image, valid_ev_imgs = load_images_valid(
+        valid_image_path, idx, args.width, args.height, args.num_frames, scale
+    )
+    
+    if accelerator.mixed_precision == "fp16":
+        valid_ev_imgs = valid_ev_imgs.to(dtype=torch.float16)
+    elif accelerator.mixed_precision == "bf16":
+        valid_ev_imgs = valid_ev_imgs.to(dtype=torch.bfloat16)
+    valid_ev_imgs = valid_ev_imgs.to(accelerator.device)
+
+    
     for val_img_idx in range(args.num_validation_images):
         num_frames = args.num_frames
         video_frames = pipeline(
@@ -751,7 +764,7 @@ def download_image(url):
     )(url)
     return original_image
 
-gt_saved = False
+global gt_saved = False
 
 def main():
     args = parse_args()
