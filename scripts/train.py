@@ -764,7 +764,8 @@ def download_image(url):
     )(url)
     return original_image
 
-global gt_saved = False
+global gt_saved 
+gt_saved = False
 
 def main():
     args = parse_args()
