@@ -14,16 +14,19 @@
 
 source /nfshomes/phan2003/miniconda3/etc/profile.d/conda.sh
 conda activate VDM_EVFI
+cd /nfshomes/phan2003/VDM_EVFI/scripts
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export NCCL_DEBUG=INFO
 export TORCH_NCCL_BLOCKING_WAIT=0
 export NCCL_TIMEOUT=3600
 
 
-accelerate launch --multi_gpu --num_processes=2 --mixed_precision=bf16 train.py \
+accelerate launch --multi_gpu --num_processes=2 --mixed_precision=bf16 train_emg.py \
     --pretrained_model_name_or_path="stabilityai/stable-video-diffusion-img2vid" \
-    --output_dir="/fs/vulcan-projects/Force_Learning/phan2003/output_EMG_run3" \
-    --train_data_path="/fs/vulcan-projects/Force_Learning/EMG" \
+    --output_dir="/fs/vulcan-projects/Force_Learning/phan2003/output_EMG_controlnet_run1" \
+    --video_root="/fs/vulcan-projects/Force_Learning/phan2003/videos" \
+    --emg_data_root="/fs/vulcan-projects/Force_Learning/EMG" \
+    --validation_video="Sirguta2_video.mp4" \
     --num_frames=14 \
     --width=512 \
     --height=320 \
@@ -32,7 +35,9 @@ accelerate launch --multi_gpu --num_processes=2 --mixed_precision=bf16 train.py 
     --gradient_checkpointing \
     \
     --num_train_epochs=100 \
-    --samples_per_folder=100 \
+    --samples_per_video=100 \
+    --emg_samples_per_interval=64 \
+    --emg_fs=500 \
     \
     --learning_rate=1e-5 \
     --lr_scheduler="cosine" \
@@ -46,8 +51,7 @@ accelerate launch --multi_gpu --num_processes=2 --mixed_precision=bf16 train.py 
     --checkpoints_total_limit=3 \
     --validation_steps=500 \
     --num_validation_images=1 \
-    \
-    --valid_path1="/fs/vulcan-projects/Force_Learning/EMG/Eadom_1/frames" \
-    --valid_path1_idx=0 \
+    --decode_chunk_size=8 \
+    --save_validation_gifs \
     --num_workers=6 \
     --seed=42
