@@ -80,11 +80,12 @@ def parse_args():
     parser.add_argument("--start_idx", type=int, default=0)
     parser.add_argument("--max_eval_clips", type=int, default=1)
     parser.add_argument("--clip_stride", type=int, default=None)
-    parser.add_argument("--rescale_factor", type=float, default=2.0)
-    parser.add_argument("--overlapping_ratio", type=float, default=0.1)
+    parser.add_argument("--rescale_factor", type=float, default=1.0)
+    parser.add_argument("--overlapping_ratio", type=float, default=0.5)
     parser.add_argument("--t0", type=int, default=0)
     parser.add_argument("--M", type=int, default=2)
-    parser.add_argument("--s_churn", type=float, default=0.5)
+    parser.add_argument("--s_churn", type=float, default=0.0)
+    parser.add_argument("--controlnet_cond_scale", type=float, default=1.0)
     parser.add_argument("--num_inference_steps", type=int, default=25)
     parser.add_argument("--decode_chunk_size", type=int, default=2)
     parser.add_argument("--mixed_precision", type=str, default=None, choices=["no", "fp16", "bf16"])
@@ -92,11 +93,31 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save_validation_gifs", action="store_true", default=True)
     parser.add_argument("--no_save_validation_gifs", dest="save_validation_gifs", action="store_false")
+    parser.add_argument(
+        "--zero_emg_condition",
+        action="store_true",
+        help="Use all-zero EMG conditioning for frame-only baseline validation.",
+    )
+    parser.add_argument(
+        "--emg_mode",
+        type=str,
+        default="real",
+        choices=["real", "zero", "shuffle"],
+        help="Which EMG condition to use at validation time.",
+    )
+    parser.add_argument(
+        "--shuffle_offset",
+        type=int,
+        default=97,
+        help="Frame offset used to choose a mismatched EMG clip when --emg_mode=shuffle.",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if args.zero_emg_condition:
+        args.emg_mode = "zero"
     args.width = args.width - args.width % 8
     args.height = args.height - args.height % 8
     os.makedirs(args.output_dir, exist_ok=True)
@@ -190,13 +211,37 @@ def main():
     gt_root = os.path.join(args.output_dir, "gt_test_images", record.sequence_name)
     gif_root = os.path.join(args.output_dir, "validation_gifs", record.sequence_name)
 
+    if accelerator.is_local_main_process:
+        with open(os.path.join(args.output_dir, "validation_config.txt"), "w") as f:
+            f.write(f"checkpoint={args.controlnet_model_name_or_path}\n")
+            f.write(f"validation_video={args.validation_video}\n")
+            f.write(f"emg_mode={args.emg_mode}\n")
+            f.write(f"controlnet_cond_scale={args.controlnet_cond_scale}\n")
+            f.write(f"start_idx={args.start_idx}\n")
+            f.write(f"max_eval_clips={args.max_eval_clips}\n")
+            f.write(f"clip_stride={args.clip_stride}\n")
+            f.write(f"rescale_factor={args.rescale_factor}\n")
+            f.write(f"num_inference_steps={args.num_inference_steps}\n")
+
     controlnet.eval()
     for clip_i, start_idx in enumerate(tqdm(starts, disable=not accelerator.is_local_main_process)):
         image_1, emg_1, image_2, emg_2, gt_frames, _ = load_validation_clip(valid_dataset, 0, start_idx)
+        if args.emg_mode == "zero":
+            emg_1 = torch.zeros_like(emg_1)
+            emg_2 = torch.zeros_like(emg_2)
+        elif args.emg_mode == "shuffle":
+            if max_start > 0:
+                shuffle_start_idx = (start_idx + args.shuffle_offset) % (max_start + 1)
+                if shuffle_start_idx == start_idx:
+                    shuffle_start_idx = (start_idx + max(1, args.num_frames)) % (max_start + 1)
+            else:
+                shuffle_start_idx = start_idx
+            _, emg_1, _, emg_2, _, _ = load_validation_clip(valid_dataset, 0, shuffle_start_idx)
         emg_1 = emg_1.to(accelerator.device, dtype=weight_dtype)
         emg_2 = emg_2.to(accelerator.device, dtype=weight_dtype)
 
-        with torch.autocast(str(accelerator.device).replace(":0", ""), enabled=accelerator.mixed_precision == "fp16"):
+        autocast_enabled = accelerator.mixed_precision in {"fp16", "bf16"} and accelerator.device.type == "cuda"
+        with torch.autocast(accelerator.device.type, dtype=weight_dtype, enabled=autocast_enabled):
             video_frames, org_frames = pipeline(
                 image_1,
                 emg_1,
@@ -211,6 +256,7 @@ def main():
                 noise_aug_strength=0.02,
                 rescale_factor=args.rescale_factor,
                 num_inference_steps=args.num_inference_steps,
+                controlnet_cond_scale=args.controlnet_cond_scale,
                 overlap_ratio=args.overlapping_ratio,
                 t0=args.t0,
                 M=args.M,

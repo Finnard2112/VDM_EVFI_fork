@@ -106,6 +106,7 @@ class ControlNetConditioningEmbeddingSVD(nn.Module):
             )
 
         conditioning = conditioning.reshape(batch_size * frames, channels, samples)
+        conditioning = conditioning.to(dtype=self.conv_in.weight.dtype, device=self.conv_in.weight.device)
         embedding = self.conv_in(conditioning)
         embedding = F.silu(embedding)
 
@@ -494,12 +495,14 @@ class ControlNetSDVModel(ModelMixin, ConfigMixin, FromOriginalControlNetMixin):
         batch_size, num_frames = sample.shape[:2]
         timesteps = timesteps.expand(batch_size)
 
+        model_dtype = self.conv_in.weight.dtype
+
         t_emb = self.time_proj(timesteps)
 
         # `Timesteps` does not contain any weights and will always return f32 tensors
         # but time_embedding might actually be running in fp16. so we need to cast here.
         # there might be better ways to encapsulate this.
-        t_emb = t_emb.to(dtype=sample.dtype)
+        t_emb = t_emb.to(dtype=model_dtype)
 
         emb = self.time_embedding(t_emb)
 
@@ -512,6 +515,7 @@ class ControlNetSDVModel(ModelMixin, ConfigMixin, FromOriginalControlNetMixin):
         # Flatten the batch and frames dimensions
         # sample: [batch, frames, channels, height, width] -> [batch * frames, channels, height, width]
         sample = sample.flatten(0, 1)
+        sample = sample.to(dtype=model_dtype, device=self.conv_in.weight.device)
         # Repeat the embeddings num_video_frames times
         # emb: [batch, channels] -> [batch * frames, channels]
         emb = emb.repeat_interleave(num_frames, dim=0)

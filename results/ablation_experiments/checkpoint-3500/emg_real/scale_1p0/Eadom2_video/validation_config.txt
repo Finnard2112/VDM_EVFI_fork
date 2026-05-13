@@ -1,0 +1,9 @@
+checkpoint=/fs/vulcan-projects/Force_Learning/phan2003/output_EMG_controlnet_run1/checkpoint-3500/controlnet
+validation_video=Eadom2_video.mp4
+emg_mode=real
+controlnet_cond_scale=1.0
+start_idx=0
+max_eval_clips=2
+clip_stride=28
+rescale_factor=1.0
+num_inference_steps=20

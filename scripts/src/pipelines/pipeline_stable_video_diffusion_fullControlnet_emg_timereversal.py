@@ -121,6 +121,7 @@ def tensor_to_vae_latent(t, vae):
     video_length = t.shape[1]
 
     t = rearrange(t, "b f c h w -> (b f) c h w")
+    t = t.to(device=vae.device, dtype=vae.dtype)
     latents = vae.encode(t).latent_dist.sample()
     latents = rearrange(latents, "(b f) c h w -> b f c h w", f=video_length)
     latents = latents * vae.config.scaling_factor

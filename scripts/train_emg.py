@@ -407,6 +407,9 @@ def make_side_by_side_frames(left_frames, right_frames):
 def validate_once(val_save_dir, accelerator, pipeline, args, global_step, valid_dataset, record_idx=0, start_idx=0):
     valid_image, valid_emg, _, _, gt_frames, record = load_validation_clip(valid_dataset, record_idx, start_idx)
 
+    if args.zero_emg_condition:
+        valid_emg = torch.zeros_like(valid_emg)
+
     if accelerator.mixed_precision == "fp16":
         valid_emg = valid_emg.to(dtype=torch.float16)
     elif accelerator.mixed_precision == "bf16":
@@ -732,6 +735,11 @@ def parse_args():
     parser.add_argument("--decode_chunk_size", type=int, default=8)
     parser.add_argument("--save_validation_gifs", action="store_true", default=True)
     parser.add_argument("--no_save_validation_gifs", dest="save_validation_gifs", action="store_false")
+    parser.add_argument(
+        "--zero_emg_condition",
+        action="store_true",
+        help="Use all-zero EMG conditioning for a frame-only ControlNet baseline.",
+    )
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -901,7 +909,9 @@ def main():
                 if model.__class__.__name__ == 'ControlNetSDVModel':
                     model.save_pretrained(os.path.join(output_dir, "controlnet"))
                 else:
-                    model.save_pretrained(os.path.join(output_dir, "unet"))
+                    accelerator.print(
+                        f"Skipping checkpoint save for frozen {model.__class__.__name__}."
+                    )
 
                 # make sure to pop weight so that corresponding model is not saved again
                 weights.pop()
@@ -1002,6 +1012,7 @@ def main():
         PSNR_list_valid= []
         SSIM_list_valid= []
         LPIPS_list_valid= []
+        valid_step_list = []
 
 
         gt_saved = False
@@ -1258,6 +1269,8 @@ def main():
                 controlnet_image = batch["emg_values"].to(weight_dtype).to(
                     accelerator.device, non_blocking=True
                 )
+                if args.zero_emg_condition:
+                    controlnet_image = torch.zeros_like(controlnet_image)
 
                 down_block_res_samples, mid_block_res_sample= controlnet(
                     inp_noisy_latents, timesteps, encoder_hidden_states,
@@ -1399,22 +1412,27 @@ def main():
                         PSNR_list_valid.append(psnr_valid)
                         SSIM_list_valid.append(ssim_valid)
                         LPIPS_list_valid.append(lpips_valid)
+                        valid_step_list.append(global_step)
 
-                        x_axis = np.arange(1, len(PSNR_list_valid) + 1, 1) * args.validation_steps
-                        plt.figure()
-                        plt.plot(x_axis, PSNR_list_valid)
-                        plt.savefig(os.path.join(args.output_dir, "PSNR_Curve_valid.png"))
-                        plt.close()
+                        x_axis = np.asarray(valid_step_list)
 
-                        plt.figure()
-                        plt.plot(x_axis, SSIM_list_valid)
-                        plt.savefig(os.path.join(args.output_dir, "SSIM_Curve_valid.png"))
-                        plt.close()
+                        def save_metric_curve(values, name, ylabel):
+                            plt.figure()
+                            plt.plot(x_axis, values, marker="o", linewidth=1.8)
+                            plt.xlabel("Training step")
+                            plt.ylabel(ylabel)
+                            plt.title(f"Validation {ylabel}")
+                            plt.grid(True, alpha=0.3)
+                            if len(x_axis) == 1:
+                                pad = max(args.validation_steps * 0.1, 1)
+                                plt.xlim(x_axis[0] - pad, x_axis[0] + pad)
+                            plt.tight_layout()
+                            plt.savefig(os.path.join(args.output_dir, name))
+                            plt.close()
 
-                        plt.figure()
-                        plt.plot(x_axis, LPIPS_list_valid)
-                        plt.savefig(os.path.join(args.output_dir, "LPIPS_Curve_valid.png"))
-                        plt.close()
+                        save_metric_curve(PSNR_list_valid, "PSNR_Curve_valid.png", "PSNR")
+                        save_metric_curve(SSIM_list_valid, "SSIM_Curve_valid.png", "SSIM")
+                        save_metric_curve(LPIPS_list_valid, "LPIPS_Curve_valid.png", "LPIPS")
 
                         if not gt_saved and args.save_validation_gifs:
                             export_to_gif(gt_frames_valid, os.path.join(args.output_dir, "gt_valid.gif"), valid_dataset.records[0].fps)
